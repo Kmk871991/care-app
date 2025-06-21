@@ -31,9 +31,9 @@ CASE_FUNCTIONS = {
 class FolderRenamerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Folder Case Renamer with Undo")
+        self.root.title("Recursive Folder Renamer with Undo")
         self.selected_path = ""
-        self.subfolders = []
+        self.folder_pairs = []
 
         self.label = tk.Label(root, text="Select a folder:")
         self.label.pack(pady=5)
@@ -41,16 +41,13 @@ class FolderRenamerApp:
         self.select_button = tk.Button(root, text="Browse", command=self.browse_folder)
         self.select_button.pack(pady=5)
 
-        self.listbox = tk.Listbox(root, width=60, height=10)
-        self.listbox.pack(pady=5)
-
         self.case_label = tk.Label(root, text="Select case format:")
         self.case_label.pack(pady=5)
 
         self.case_combo = ttk.Combobox(root, values=list(CASE_FUNCTIONS.keys()))
         self.case_combo.pack(pady=5)
 
-        self.convert_button = tk.Button(root, text="Convert", command=self.convert)
+        self.convert_button = tk.Button(root, text="Convert Recursively", command=self.convert)
         self.convert_button.pack(pady=10)
 
         self.undo_button = tk.Button(root, text="Undo Rename", command=self.undo_rename)
@@ -60,13 +57,6 @@ class FolderRenamerApp:
         path = filedialog.askdirectory()
         if path:
             self.selected_path = path
-            self.refresh_subfolders()
-
-    def refresh_subfolders(self):
-        self.listbox.delete(0, tk.END)
-        self.subfolders = [f for f in os.listdir(self.selected_path) if os.path.isdir(os.path.join(self.selected_path, f))]
-        for folder in self.subfolders:
-            self.listbox.insert(tk.END, folder)
 
     def convert(self):
         selected_case = self.case_combo.get()
@@ -76,23 +66,27 @@ class FolderRenamerApp:
 
         try:
             func = CASE_FUNCTIONS[selected_case]
-            backup_dir = os.path.join(self.selected_path, "_backup_names")
-            os.makedirs(backup_dir, exist_ok=True)
+            self.folder_pairs = []
 
-            with open(os.path.join(backup_dir, "original_names.txt"), "w") as f:
-                for folder in self.subfolders:
-                    f.write(folder + "\n")
+            for dirpath, dirnames, _ in os.walk(self.selected_path, topdown=False):
+                for dirname in dirnames:
+                    old_path = os.path.join(dirpath, dirname)
+                    new_name = func(dirname)
+                    new_path = os.path.join(dirpath, new_name)
+                    if new_name != dirname:
+                        self.folder_pairs.append((old_path, new_path))
+                        os.rename(old_path, new_path)
 
-            for folder in self.subfolders:
-                new_name = func(folder)
-                if new_name and new_name != folder:
-                    os.rename(
-                        os.path.join(self.selected_path, folder),
-                        os.path.join(self.selected_path, new_name)
-                    )
+            if self.folder_pairs:
+                backup_dir = os.path.join(self.selected_path, "_backup_names")
+                os.makedirs(backup_dir, exist_ok=True)
+                with open(os.path.join(backup_dir, "folder_pairs.txt"), "w") as f:
+                    for old, new in self.folder_pairs:
+                        f.write(old + "|" + new + "\n")
 
-            messagebox.showinfo("Success", "Folder names converted successfully!")
-            self.refresh_subfolders()
+                messagebox.showinfo("Success", "All folders renamed recursively.")
+            else:
+                messagebox.showinfo("Info", "No folder names needed renaming.")
 
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -100,31 +94,24 @@ class FolderRenamerApp:
     def undo_rename(self):
         try:
             backup_dir = os.path.join(self.selected_path, "_backup_names")
-            backup_file = os.path.join(backup_dir, "original_names.txt")
+            backup_file = os.path.join(backup_dir, "folder_pairs.txt")
 
             if not os.path.exists(backup_file):
                 messagebox.showerror("Error", "No backup file found.")
                 return
 
             with open(backup_file, "r") as f:
-                original_names = [line.strip() for line in f.readlines()]
+                folder_pairs = [line.strip().split("|") for line in f.readlines()]
 
-            current_folders = [f for f in os.listdir(self.selected_path)
-                               if os.path.isdir(os.path.join(self.selected_path, f)) and f != "_backup_names"]
+            # Sort by path depth descending to avoid rename conflicts
+            folder_pairs.sort(key=lambda x: x[1].count(os.sep), reverse=True)
 
-            if len(current_folders) != len(original_names):
-                messagebox.showerror("Error", "Mismatch in folder counts. Cannot undo safely.")
-                return
-
-            for curr, orig in zip(sorted(current_folders), original_names):
-                os.rename(
-                    os.path.join(self.selected_path, curr),
-                    os.path.join(self.selected_path, orig)
-                )
+            for old_path, new_path in folder_pairs:
+                if os.path.exists(new_path):
+                    os.rename(new_path, old_path)
 
             shutil.rmtree(backup_dir)
-            messagebox.showinfo("Success", "Folders restored and backup deleted.")
-            self.refresh_subfolders()
+            messagebox.showinfo("Success", "Undo successful. Folders restored.")
 
         except Exception as e:
             messagebox.showerror("Undo Error", str(e))
