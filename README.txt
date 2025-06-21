@@ -1,18 +1,22 @@
-# Recursive Folder Renamer with Undo (Windows GUI)
+# Folder Renamer with Versioned Backups, Undo Options, and Logging
 
-✅ Rename all subfolders (even nested ones) recursively  
-✅ Undo operation restores folders back and deletes the backup
+Features:
+- Recursively renames all subfolders using chosen case style
+- Creates separate backup for each case (e.g., `backup_kebab-case`)
+- Option to keep or delete backup after undo
+- "Undo Last Action" button
+- Logs all renames and undos to `rename_log.txt`
 
 ## How to Use
 1. Run `folder_renamer.py`
-2. Select a folder
-3. Choose case style
-4. Click "Convert Recursively"
-5. To undo, click "Undo Rename"
+2. Select folder
+3. Choose case format → Convert
+4. Select backup from dropdown → Undo
+5. Or use "Undo Last Action" to quickly revert latest change
+6. Check `rename_log.txt` for history
 
-## Build EXE
+## Create .exe:
 ```
 pip install pyinstaller
 pyinstaller --onefile --windowed folder_renamer.py
 ```
-Find the EXE in the `dist/` folder.
