@@ -1,174 +1,186 @@
 
 import os
-import shutil
+import re
+import json
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-from datetime import datetime
+from tkinter import ttk, messagebox
+import pythoncom
+import win32com.client
 
-def to_pascal_case(name): return ''.join(word.capitalize() for word in name.replace('_', ' ').replace('-', ' ').split())
-def to_kebab_case(name): return '-'.join(name.lower().split())
+BACKUP_FILE = os.path.join(os.path.dirname(__file__), "rename_backlog.json")
+
+def to_kebab_case(name):
+    name, ext = os.path.splitext(name)
+    name = re.sub(r'[^\w\s-]', '', name)
+    name = re.sub(r'[_\s]+', '-', name)
+    name = re.sub(r'([a-z0-9])([A-Z])', r'\1-\2', name)
+    name = re.sub(r'([0-9])([a-zA-Z])', r'\1-\2', name)
+    name = re.sub(r'([a-zA-Z])([0-9])', r'\1-\2', name)
+    return name.lower() + ext
+
+def to_pascal_case(name):
+    name, ext = os.path.splitext(name)
+    parts = re.split(r'[_\-\s]+', name)
+    return ''.join(word.capitalize() for word in parts if word) + ext
+
+def to_snake_case(name):
+    name, ext = os.path.splitext(name)
+    name = re.sub(r'[^\w\s-]', '', name)
+    name = re.sub(r'[_\s-]+', '_', name)
+    name = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name)
+    return name.lower() + ext
+
 def to_camel_case(name):
-    words = name.lower().split()
-    return words[0] + ''.join(word.capitalize() for word in words[1:])
-def to_snake_case(name): return '_'.join(name.lower().split())
-def to_upper_case(name): return name.upper()
-def to_lower_case(name): return name.lower()
-def to_title_case(name): return name.title()
-def to_sentence_case(name): 
-    words = name.lower().split()
-    return ' '.join([words[0].capitalize()] + words[1:]) if words else ''
+    name, ext = os.path.splitext(name)
+    parts = re.split(r'[_\-\s]+', name)
+    camel = parts[0].lower() + ''.join(word.capitalize() for word in parts[1:] if word)
+    return camel + ext
+
+def to_upper_case(name):
+    return name.upper()
+
+def to_lower_case(name):
+    return name.lower()
+
+def to_title_case(name):
+    name, ext = os.path.splitext(name)
+    return name.title() + ext
+
+def to_sentence_case(name):
+    name, ext = os.path.splitext(name)
+    return name.capitalize() + ext
 
 CASE_FUNCTIONS = {
-    "PascalCase": to_pascal_case,
     "kebab-case": to_kebab_case,
-    "camelCase": to_camel_case,
+    "PascalCase": to_pascal_case,
     "snake_case": to_snake_case,
+    "camelCase": to_camel_case,
     "UPPERCASE": to_upper_case,
     "lowercase": to_lower_case,
     "Title Case": to_title_case,
-    "Sentence case": to_sentence_case
+    "Sentence case": to_sentence_case,
 }
 
-class FolderRenamerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Folder Renamer (Versioned Backup + Logs)")
-        self.selected_path = ""
-        self.backup_selected = tk.StringVar()
-        self.keep_backup = tk.BooleanVar(value=False)
-
-        self.label = tk.Label(root, text="Select a folder:")
-        self.label.pack(pady=5)
-
-        self.select_button = tk.Button(root, text="Browse", command=self.browse_folder)
-        self.select_button.pack(pady=5)
-
-        self.case_label = tk.Label(root, text="Select case format:")
-        self.case_label.pack(pady=5)
-
-        self.case_combo = ttk.Combobox(root, values=list(CASE_FUNCTIONS.keys()))
-        self.case_combo.pack(pady=5)
-
-        self.convert_button = tk.Button(root, text="Convert Recursively", command=self.convert)
-        self.convert_button.pack(pady=10)
-
-        self.undo_label = tk.Label(root, text="Select backup to undo:")
-        self.undo_label.pack(pady=5)
-
-        self.backup_combo = ttk.Combobox(root, textvariable=self.backup_selected)
-        self.backup_combo.pack(pady=5)
-
-        self.keep_check = tk.Checkbutton(root, text="Keep backup after undo", variable=self.keep_backup)
-        self.keep_check.pack(pady=5)
-
-        self.undo_button = tk.Button(root, text="Undo Rename", command=self.undo_rename)
-        self.undo_button.pack(pady=5)
-
-        self.quick_undo_button = tk.Button(root, text="Undo Last Action", command=self.undo_last_backup)
-        self.quick_undo_button.pack(pady=5)
-
-    def browse_folder(self):
-        path = filedialog.askdirectory()
-        if path:
-            self.selected_path = path
-            self.load_backups()
-
-    def load_backups(self):
-        backup_root = os.path.join(self.selected_path, "_backup_names")
-        if os.path.exists(backup_root):
-            backups = [f for f in os.listdir(backup_root) if os.path.isdir(os.path.join(backup_root, f))]
-            backups.sort(reverse=True)
-            self.backup_combo['values'] = backups
-            if backups:
-                self.backup_combo.current(0)
-        else:
-            self.backup_combo['values'] = []
-
-    def log_action(self, action, case, count):
-        log_path = os.path.join(self.selected_path, "rename_log.txt")
-        with open(log_path, "a") as log:
-            log.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {action} | {case} | {count} folders\n")
-
-    def convert(self):
-        selected_case = self.case_combo.get()
-        if not selected_case:
-            messagebox.showerror("Error", "Please select a case format.")
-            return
-
+def get_selected_items():
+    pythoncom.CoInitialize()
+    shell = win32com.client.Dispatch("Shell.Application")
+    all_paths = []
+    for window in shell.Windows():
         try:
-            func = CASE_FUNCTIONS[selected_case]
-            folder_pairs = []
+            if window and window.Document:
+                items = window.Document.SelectedItems()
+                for i in range(items.Count):
+                    all_paths.append(items.Item(i).Path)
+        except Exception:
+            continue
+    return all_paths
 
-            for dirpath, dirnames, _ in os.walk(self.selected_path, topdown=False):
-                for dirname in dirnames:
-                    old_path = os.path.join(dirpath, dirname)
-                    new_name = func(dirname)
-                    new_path = os.path.join(dirpath, new_name)
-                    if new_name != dirname:
-                        folder_pairs.append((old_path, new_path))
-                        os.rename(old_path, new_path)
+def load_backup():
+    if os.path.exists(BACKUP_FILE):
+        with open(BACKUP_FILE, 'r') as f:
+            return json.load(f)
+    return {}
 
-            if folder_pairs:
-                backup_root = os.path.join(self.selected_path, "_backup_names")
-                backup_dir = os.path.join(backup_root, f"backup_{selected_case}")
-                os.makedirs(backup_dir, exist_ok=True)
+def save_backup(backup):
+    with open(BACKUP_FILE, 'w') as f:
+        json.dump(backup, f, indent=2)
 
-                with open(os.path.join(backup_dir, "folder_pairs.txt"), "w") as f:
-                    for old, new in folder_pairs:
-                        f.write(old + "|" + new + "\n")
+def rename_selected(case_style):
+    paths = get_selected_items()
+    if not paths:
+        messagebox.showwarning("Selection Not Found", "No files or folders selected.")
+        return
 
-                self.load_backups()
-                self.log_action("RENAME", selected_case, len(folder_pairs))
-                messagebox.showinfo("Success", f"Renamed using {selected_case}. Backup saved.")
+    if case_style not in CASE_FUNCTIONS:
+        messagebox.showerror("Invalid Style", f"Case style '{case_style}' is not supported.")
+        return
 
-            else:
-                messagebox.showinfo("Info", "No folder names needed renaming.")
+    converter = CASE_FUNCTIONS[case_style]
+    backup = load_backup()
+    renamed = []
 
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
-    def undo_rename(self):
-        selected_backup = self.backup_selected.get()
-        if not selected_backup:
-            messagebox.showerror("Error", "Please select a backup to undo.")
-            return
-
-        self.perform_undo(selected_backup)
-
-    def undo_last_backup(self):
-        values = self.backup_combo['values']
-        if values:
-            self.perform_undo(values[0])
-        else:
-            messagebox.showerror("Error", "No backups available to undo.")
-
-    def perform_undo(self, backup_name):
-        try:
-            backup_file = os.path.join(self.selected_path, "_backup_names", backup_name, "folder_pairs.txt")
-            if not os.path.exists(backup_file):
-                messagebox.showerror("Error", "Backup file not found.")
+    for path in paths:
+        folder, old_name = os.path.split(path)
+        new_name = converter(old_name)
+        new_path = os.path.join(folder, new_name)
+        if path != new_path:
+            try:
+                os.rename(path, new_path)
+                renamed.append(f"{old_name} → {new_name}")
+                backup[new_path] = path
+            except Exception as e:
+                messagebox.showerror("Rename Failed", f"{old_name} → {e}")
                 return
 
-            with open(backup_file, "r") as f:
-                folder_pairs = [line.strip().split("|") for line in f.readlines()]
+    save_backup(backup)
 
-            folder_pairs.sort(key=lambda x: x[1].count(os.sep), reverse=True)
+    if renamed:
+        messagebox.showinfo("Success", "Renamed:\n" + "\n".join(renamed))
+    else:
+        messagebox.showinfo("No Change", "No renaming was necessary.")
 
-            for old_path, new_path in folder_pairs:
-                if os.path.exists(new_path):
-                    os.rename(new_path, old_path)
+def undo_selected():
+    paths = get_selected_items()
+    if not paths:
+        messagebox.showwarning("Selection Not Found", "No files or folders selected.")
+        return
 
-            if not self.keep_backup.get():
-                shutil.rmtree(os.path.join(self.selected_path, "_backup_names", backup_name))
+    backup = load_backup()
+    undone = []
 
-            self.load_backups()
-            self.log_action("UNDO", backup_name.replace("backup_", ""), len(folder_pairs))
-            messagebox.showinfo("Success", f"Undo successful from {backup_name}.")
+    for path in paths:
+        if path in backup:
+            original_path = backup[path]
+            try:
+                os.rename(path, original_path)
+                undone.append(os.path.basename(path))
+                del backup[path]
+            except Exception as e:
+                messagebox.showerror("Undo Failed", f"{path} → {e}")
+                return
 
-        except Exception as e:
-            messagebox.showerror("Undo Error", str(e))
+    save_backup(backup)
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = FolderRenamerApp(root)
-    root.mainloop()
+    if undone:
+        messagebox.showinfo("Undone", "Restored:\n" + "\n".join(undone))
+    else:
+        messagebox.showinfo("Nothing to Undo", "No matching entries in backup.")
+
+# GUI
+root = tk.Tk()
+root.title("Renamer + Undo (All Case Styles)")
+root.geometry("320x180+1200+700")
+root.configure(bg="#F0F0F0")
+root.attributes("-topmost", True)
+
+def start_move(event): root.x, root.y = event.x, event.y
+def stop_move(event): root.x, root.y = None, None
+def do_move(event):
+    x = root.winfo_x() + (event.x - root.x)
+    y = root.winfo_y() + (event.y - root.y)
+    root.geometry(f"+{x}+{y}")
+
+# Header
+title_bar = tk.Frame(root, bg="#262626", relief="raised", bd=0)
+title_bar.pack(fill=tk.X)
+tk.Label(title_bar, text="🔁 Renamer (All Cases)", bg="#262626", fg="white", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=6)
+tk.Button(title_bar, text="–", command=root.iconify, bg="#262626", fg="white", bd=0, font=("Arial", 12)).pack(side=tk.RIGHT, padx=5)
+tk.Button(title_bar, text="×", command=root.destroy, bg="#262626", fg="white", bd=0, font=("Arial", 12)).pack(side=tk.RIGHT)
+title_bar.bind("<Button-1>", start_move)
+title_bar.bind("<B1-Motion>", do_move)
+title_bar.bind("<ButtonRelease-1>", stop_move)
+
+# Case selection
+style_var = tk.StringVar(value="kebab-case")
+ttk.Label(root, text="Choose case style:", background="#F0F0F0").pack(pady=(10, 0))
+case_menu = ttk.Combobox(root, textvariable=style_var, values=list(CASE_FUNCTIONS.keys()), state="readonly")
+case_menu.pack(pady=4)
+
+# Buttons
+tk.Button(root, text="Rename", command=lambda: rename_selected(style_var.get()),
+          bg="#4CAF50", fg="white", font=("Segoe UI", 10, "bold"), bd=0, relief="flat", height=2, cursor="hand2").pack(pady=5, padx=20, fill=tk.BOTH)
+
+tk.Button(root, text="Undo Rename", command=undo_selected,
+          bg="#607D8B", fg="white", font=("Segoe UI", 10, "bold"), bd=0, relief="flat", height=2, cursor="hand2").pack(pady=5, padx=20, fill=tk.BOTH)
+
+root.mainloop()
