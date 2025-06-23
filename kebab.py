@@ -8,6 +8,8 @@ import win32com.client
 
 def to_kebab_case(name):
     name, ext = os.path.splitext(name)
+    # Remove quotes and non-alphanumeric characters except spaces, dashes, and underscores
+    name = re.sub(r'[^\w\s-]', '', name)
     name = re.sub(r'[_\s]+', '-', name)
     name = re.sub(r'([a-z0-9])([A-Z])', r'\1-\2', name)
     name = re.sub(r'([0-9])([a-zA-Z])', r'\1-\2', name)
@@ -87,7 +89,6 @@ btn = tk.Button(root, text="Rename to kebab-case", command=rename_selected,
                 bd=0, relief="flat", height=2, cursor="hand2")
 btn.pack(pady=20, padx=20, fill=tk.BOTH)
 
-# Rounded border effect
 btn.configure(highlightthickness=0, padx=10, pady=6)
 
 root.mainloop()
